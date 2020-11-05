@@ -1,6 +1,6 @@
 #!/bin/sh
 
-apt-get -y install git build-essential
+apt-get -y install git build-essential python
 
 cd /opt
 
