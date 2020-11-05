@@ -15,3 +15,7 @@ git clone --depth 1 https://github.com/ahayworth/iogear2mqtt
 
 cd /opt/iogear2mqtt
 npm install
+
+cp /opt/iogear2mqtt/dietpi/iogear2mqtt.service /etc/systemd/system/iogear2mqtt.service
+systemctl daemon-reload
+systemctl enable iogear2mqtt.service

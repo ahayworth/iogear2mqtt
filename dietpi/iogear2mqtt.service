@@ -1,0 +1,12 @@
+[Unit]
+Description=IOGEAR HDMI switch to MQTT bridge
+Requisite=dietpi-boot.service
+After=dietpi-boot.service dietpi-postboot.service rc-local.service
+
+[Service]
+ExecStart=/usr/bin/node /opt/iogear2mqtt/index.js
+Restart=on-failure
+User=root
+
+[Install]
+WantedBy=multi-user.target
