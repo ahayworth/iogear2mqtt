@@ -1,3 +1,4 @@
+const debug = require('debug')('iogear');
 const yargs = require('yargs');
 const { hideBin } = require('yargs/helpers');
 
@@ -53,6 +54,16 @@ const argv = yargs(hideBin(process.argv))
 const hdmi_name = argv.name || 'IOGEAR HDMI ' + argv.ports + '-port switch';
 const hdmi_unique_id = argv.unique_id;
 const hdmi_ports = argv.ports;
+
+console.log('-------\nConfig\n-------');
+console.log('Switch ports: ' + argv.ports);
+console.log('TTY: ' + argv.serialport);
+console.log('MQTT Broker: ' + argv.broker);
+console.log('Device name: ' + argv.name);
+console.log('Unique ID: ' + argv.unique_id);
+
+console.log('\n-------------\nStarting up!\n-------------\n');
+
 const availability_topic = 'homeassistant/switch/' + hdmi_unique_id + '/availability';
 
 var hdmi_firmware = undefined;
@@ -63,35 +74,43 @@ var registered = false;
 var serial_conn = {};
 var mqtt_conn = {};
 
-function hdmi_refresh() {
-  serial_conn.port.write('read\r');
+
+function serial_write(command) {
+  debug('Sending command: ' + command);
+  serial_conn.port.write(command + '\r');
 }
 
-function command_topic(i) {
-  var p = i || '+';
-  return 'homeassistant/switch/' + hdmi_unique_id + '/' + p + '/set';
+function mqtt_write(topic, msg, options) {
+  var opts = options || {};
+  debug(
+    'Sending message to MQTT topic: ' +
+    topic + '\n' + '  -> ' + msg + '\n  -> ' +
+    JSON.stringify(opts)
+  );
+  mqtt_conn.client.publish(topic, msg, opts);
 }
 
-function state_topic(i) {
+function mqtt_topic(part, i) {
   var p = i || '+';
-  return 'homeassistant/switch/' + hdmi_unique_id + '/' + p + '/state';
-}
-
-function config_topic(i) {
-  var p = i || '+';
-  return 'homeassistant/switch/' + hdmi_unique_id + '/' + p + '/config';
+  return [
+    'homeassistant/switch',
+    hdmi_unique_id,
+    p,
+    part,
+  ].join('/');
 }
 
 function port_config(i) {
   var config = {
     name: 'Input ' + i,
     availability_topic: availability_topic,
-    command_topic: command_topic(i),
-    state_topic: state_topic(i),
+    command_topic: mqtt_topic('set', i),
+    state_topic: mqtt_topic('state', i),
     payload_off: 'off',
     payload_on: 'on',
     state_off: 'off',
     state_on: 'on',
+    icon: 'mdi:set-top-box',
     unique_id: hdmi_unique_id + '_input_' + i,
     device: {
       identifiers: [hdmi_unique_id],
@@ -105,20 +124,25 @@ function port_config(i) {
   return JSON.stringify(config);
 }
 
-function select_port(i) {
-  serial_conn.port.write('sw i0' + i + '\r');
+function bail(err, prefix) {
+  if (err !== null) {
+    var message = err.message;
+    if (prefix) message = prefix + message;
+
+    console.log(message);
+    process.exit(1);
+  }
 }
 
-serial_conn.port = new SerialPort(argv.serialport, { baudRate: 19200 }, function(err) {
-  if (err) {
-    console.log(err.message);
-  }
+serial_conn.port = new SerialPort(argv.serialport, { baudRate: 19200 });
+
+serial_conn.port.on('error', function(err) {
+  return bail(err, 'Serial port: ');
 });
 
 serial_conn.parser = serial_conn.port.pipe(new Readline({ delimiter: '\r' }));
-
-serial_conn.port.on('error', function(err) {
-  console.log(err.message);
+serial_conn.parser.on('error', function(err) {
+  return bail(err, 'Serial port: ');
 });
 
 mqtt_conn.client = mqtt.connect(argv.broker, {
@@ -129,18 +153,25 @@ mqtt_conn.client = mqtt.connect(argv.broker, {
   }
 });
 
+var mqtt_errs = ['error', 'close', 'offline'];
+for (const e of mqtt_errs) {
+  mqtt_conn.client.on(e, function(err) {
+    return bail(err, 'MQTT: ');
+  });
+}
+
 mqtt_conn.client.on('connect', function() {
-  console.log('mqtt connected!');
-  mqtt_conn.client.subscribe(command_topic());
+  console.log('MQTT connected!');
+  mqtt_conn.client.subscribe(mqtt_topic('set'));
 });
 
 mqtt_conn.client.on('message', function(topic, message) {
-  console.log('Got message: ', topic + ' - ' + message);
+  debug('Got message: ', topic + ' - ' + message);
   if (topic.indexOf('/set') != -1 && message == 'on') {
     var match = topic.match(/homeassistant\/switch\/[^/]+\/(?<input>\d)\/set/)
     var input = parseInt(match.groups.input);
-    select_port(input);
-    hdmi_refresh();
+    serial_write('sw i0' + input);
+    serial_write('read');
   }
 });
 
@@ -149,31 +180,34 @@ serial_conn.parser.on('data', function(line) {
   if (line.indexOf('Input: port') != -1) {
     var match = line.match(/Input: port\s+(?<port>\d+)/);
     var input = parseInt(match.groups.port);
+
     shouldUpdate = (hdmi_active_port !== input);
     hdmi_active_port = input;
   } else if (line.indexOf('F/W: V') != -1) {
-    var match = line.match(/F\/W: (?<version>.+)$/)
-    hdmi_firmware = match.groups.version;
+    var match = line.match(/F\/W: (?<version>.+)$/);
+    var fw = match.groups.version;
+    hdmi_firmware = fw;
   }
 
   if (registered === false && shouldUpdate) {
+    debug('Registering with homeassistant');
     for (var i = 1; i <= hdmi_ports; i++) {
-      mqtt_conn.client.publish(config_topic(i), port_config(i))
+      mqtt_write(mqtt_topic('config', i), port_config(i));
     }
     registered = true;
   }
 
   if (registered === true && shouldUpdate) {
+    debug('Got new active port: ' + hdmi_active_port);
+
     for (var i = 1; i <= hdmi_ports; i++) {
       var state = (hdmi_active_port === i ? 'on' : 'off');
-      mqtt_conn.client.publish(state_topic(i), state);
+      mqtt_write(mqtt_topic('state', i), state);
     }
-    mqtt_conn.client.publish(availability_topic, 'online', {
-      retain: true,
-    });
+    mqtt_write(availability_topic, 'online', { retain: true });
   }
 });
 
 setInterval(function() {
-  hdmi_refresh();
+  serial_write('read');
 }, 3000);
