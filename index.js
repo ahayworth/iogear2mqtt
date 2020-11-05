@@ -59,8 +59,8 @@ console.log('-------\nConfig\n-------');
 console.log('Switch ports: ' + argv.ports);
 console.log('TTY: ' + argv.serialport);
 console.log('MQTT Broker: ' + argv.broker);
-console.log('Device name: ' + argv.name);
-console.log('Unique ID: ' + argv.unique_id);
+console.log('Device name: ' + hdmi_name);
+console.log('Unique ID: ' + hdmi_unique_id);
 
 console.log('\n-------------\nStarting up!\n-------------\n');
 
@@ -100,7 +100,7 @@ function mqtt_topic(part, i) {
 
 function port_config(i) {
   var config = {
-    name: 'Input ' + i,
+    name: argv.name + ' - Input ' + i,
     availability_topic: availability_topic,
     command_topic: mqtt_topic('set', i),
     state_topic: mqtt_topic('state', i),
