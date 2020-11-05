@@ -190,10 +190,10 @@ mqtt_conn.client.on('message', function(topic, message) {
     var input = parseInt(match.groups.input);
     serial_write('sw i0' + input);
     serial_write('read');
-  } else if (topic === 'homeassistant/status') {
-    if (message === 'offline') {
+  } else if (topic == 'homeassistant/status') {
+    if (message == 'offline') {
       console.log('homeassistant is offline, but MQTT broker is alive');
-    } else if (message === 'online') {
+    } else if (message == 'online') {
       console.log('homeassistant is back online');
       reregister();
       updateports();
