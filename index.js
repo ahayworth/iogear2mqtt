@@ -80,14 +80,12 @@ function serial_write(command) {
   serial_conn.port.write(command + '\r');
 }
 
-function mqtt_write(topic, msg, options) {
-  var opts = options || {};
+function mqtt_write(topic, msg) {
   debug(
     'Sending message to MQTT topic: ' +
-    topic + '\n' + '  -> ' + msg + '\n  -> ' +
-    JSON.stringify(opts)
+    topic + '\n' + '  -> ' + msg
   );
-  mqtt_conn.client.publish(topic, msg, opts);
+  mqtt_conn.client.publish(topic, msg, { retain: true });
 }
 
 function mqtt_topic(part, i) {
@@ -118,7 +116,8 @@ function port_config(i) {
       model: hdmi_ports + ' port HDMI switch',
       name: hdmi_name,
       sw_version: hdmi_firmware,
-    }
+    },
+    retain: true,
   };
 
   return JSON.stringify(config);
@@ -132,6 +131,15 @@ function bail(err, prefix) {
     console.log(message);
     process.exit(1);
   }
+}
+
+function reregister() {
+  console.log('Registering with homeassistant');
+  for (var i = 1; i <= hdmi_ports; i++) {
+    mqtt_write(mqtt_topic('config', i), port_config(i));
+  }
+  mqtt_write(availability_topic, 'online');
+  registered = true;
 }
 
 serial_conn.port = new SerialPort(argv.serialport, { baudRate: 19200 });
@@ -163,6 +171,7 @@ for (const e of mqtt_errs) {
 mqtt_conn.client.on('connect', function() {
   console.log('MQTT connected!');
   mqtt_conn.client.subscribe(mqtt_topic('set'));
+  mqtt_conn.client.subscribe('homeassistant/status');
 });
 
 mqtt_conn.client.on('message', function(topic, message) {
@@ -172,6 +181,14 @@ mqtt_conn.client.on('message', function(topic, message) {
     var input = parseInt(match.groups.input);
     serial_write('sw i0' + input);
     serial_write('read');
+  } else if (topic === 'homeassistant/status') {
+    if (message === 'offine') {
+      console.log('homeassistant is offline, but MQTT broker is alive');
+    } else if (message === 'online') {
+      console.log('homeassistant is back online');
+      registered = false;
+      reregister();
+    }
   }
 });
 
@@ -189,22 +206,18 @@ serial_conn.parser.on('data', function(line) {
     hdmi_firmware = fw;
   }
 
-  if (registered === false && shouldUpdate) {
-    debug('Registering with homeassistant');
-    for (var i = 1; i <= hdmi_ports; i++) {
-      mqtt_write(mqtt_topic('config', i), port_config(i));
-    }
-    registered = true;
-  }
+  if (shouldUpdate) {
+    if (registered === false) {
+      reregister();
+    } else {
+      debug('Got new active port: ' + hdmi_active_port);
 
-  if (registered === true && shouldUpdate) {
-    debug('Got new active port: ' + hdmi_active_port);
-
-    for (var i = 1; i <= hdmi_ports; i++) {
-      var state = (hdmi_active_port === i ? 'on' : 'off');
-      mqtt_write(mqtt_topic('state', i), state);
+      for (var i = 1; i <= hdmi_ports; i++) {
+        var state = (hdmi_active_port === i ? 'on' : 'off');
+        mqtt_write(mqtt_topic('state', i), state);
+      }
+      mqtt_write(availability_topic, 'online');
     }
-    mqtt_write(availability_topic, 'online', { retain: true });
   }
 });
 
