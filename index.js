@@ -117,7 +117,6 @@ function port_config(i) {
       name: hdmi_name,
       sw_version: hdmi_firmware,
     },
-    retain: true,
   };
 
   return JSON.stringify(config);
