@@ -142,6 +142,15 @@ function reregister() {
   registered = true;
 }
 
+function updateports() {
+  debug('updating ports with homeassistant');
+  for (var i = 1; i <= hdmi_ports; i++) {
+    var state = (hdmi_active_port === i ? 'on' : 'off');
+    mqtt_write(mqtt_topic('state', i), state);
+  }
+  mqtt_write(availability_topic, 'online');
+}
+
 serial_conn.port = new SerialPort(argv.serialport, { baudRate: 19200 });
 
 serial_conn.port.on('error', function(err) {
@@ -186,8 +195,8 @@ mqtt_conn.client.on('message', function(topic, message) {
       console.log('homeassistant is offline, but MQTT broker is alive');
     } else if (message === 'online') {
       console.log('homeassistant is back online');
-      registered = false;
       reregister();
+      updateports();
     }
   }
 });
@@ -207,17 +216,10 @@ serial_conn.parser.on('data', function(line) {
   }
 
   if (shouldUpdate) {
-    if (registered === false) {
-      reregister();
-    } else {
-      debug('Got new active port: ' + hdmi_active_port);
+    if (registered === false) reregister();
 
-      for (var i = 1; i <= hdmi_ports; i++) {
-        var state = (hdmi_active_port === i ? 'on' : 'off');
-        mqtt_write(mqtt_topic('state', i), state);
-      }
-      mqtt_write(availability_topic, 'online');
-    }
+    console.log('Got new active port: ' + hdmi_active_port);
+    updateports();
   }
 });
 
